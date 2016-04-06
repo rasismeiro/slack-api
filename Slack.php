@@ -1,73 +1,116 @@
 <?php
+
 /**
  * Simple abstraction of Slack API
- *
- * Uses curl, if not falls back to file_get_contents and HTTP stream.
- *
- * For all api methods, refer to https://api.slack.com/
- *
- * @author  Yong Zhen <yz@stargate.io>
+ * For all api methods, refer to https://api.slack.com/methods
  * @version  1.0.0
  */
 class Slack {
 
-  private $api_token;
-  private $api_endpoint = 'https://slack.com/api/<method>';
+    private $token;
+    private $proxy;
+    private $tor;
+    private $endpoint = 'https://slack.com/api/<method>';
+    private $timeout = 10;
 
-  /**
-   * Create a new instance
-   * @param string $api_token Your Slack api bearer token
-   */
-  function __construct($api_token){
-    $this->api_token = $api_token;
-  }
-
-  /**
-   * Calls an API method. You don't have to pass in the token, it will automatically be included.
-   * @param  string  $method  The API method to call.
-   * @param  array   $args    An associative array of arguments to pass to the API.
-   * @param  integer $timeout Set maximum time the request is allowed to take, in seconds.
-   * @return array           The response as an associative array, JSON-decoded.
-   */
-  public function call($method, $args = array(), $timeout = 10){
-    return $this->request($method, $args, $timeout);
-  }
-
-  /**
-   * Performs the underlying HTTP request.
-   * @param  string  $method  The API method to call.
-   * @param  array   $args    An associative array of arguments to pass to the API.
-   * @param  integer $timeout Set maximum time the request is allowed to take, in seconds.
-   * @return array           The response as an associative array, JSON-decoded.
-   */
-  private function request($method, $args = array(), $timeout = 10){
-    $url = str_replace('<method>', $method, $this->api_endpoint);
-    $args['token'] = $this->api_token;
-
-    if (function_exists('curl_version')){
-      $ch = curl_init();
-      curl_setopt($ch, CURLOPT_URL, $url);
-      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-      curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-      curl_setopt($ch, CURLOPT_POST, true);
-      curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-      curl_setopt($ch, CURLOPT_POSTFIELDS, $args);
-      $result = curl_exec($ch);
-      curl_close($ch);
-    } else {
-      $post_data = http_build_query($args);
-      $result    = file_get_contents($url, false, stream_context_create(array(
-        'http' => array(
-          'protocol_version' => 1.1,
-          'method'           => 'POST',
-          'header'           => "Content-type: application/x-www-form-urlencoded\r\n" .
-                                "Content-length: " . strlen($post_data) . "\r\n" .
-                                "Connection: close\r\n",
-          'content'          => $post_data
-        ),
-      )));
+    /**
+     * Create a new instance
+     * @param string $token Your Slack api bearer token
+     * @param string $proxy     eg: 172.31.31.31:3128
+     * @param boolean $tor      see more https://www.torproject.org/docs/rpms.html.en
+     */
+    public function __construct($token, $proxy = false, $tor = false) {
+        $this->token = $token;
+        $this->proxy = $proxy;
+        /**
+         * if $tor is equal to true please check if you setup Tor
+         * to run in 127.0.0.1 and in the 9050 port
+         */
+        $this->tor = $tor;
     }
 
-    return $result ? json_decode($result, true) : false;
-  }
+    /**
+     * Calls an API method. You don't have to pass in the token, it will automatically be included.
+     * @param  string  $method  The API method to call.
+     * @param  array   $args    An associative array of arguments to pass to the API.
+     * @return array           The response as an associative array, JSON-decoded.
+     */
+    public function call($method, $args = array()) {
+        return $this->post($method, $args);
+    }
+
+    public function __call($name, $arguments) {
+        if (strpos($name, '_')) {
+            $name = str_replace('_', '.', $name);
+            return $this->post($name, $arguments);
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Performs the underlying HTTP request.
+     * @param  string  $method  The API method to call.
+     * @param  array   $args    An associative array of arguments to pass to the API.
+     * @return array           The response as an associative array, JSON-decoded.
+     */
+    private function post($method, $args = array()) {
+        $url = str_replace('<method>', $method, $this->endpoint);
+        $args = array('token' => $this->token);
+
+        $ch = $this->getCurl();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $args);
+        $result = curl_exec($ch);
+        curl_close($ch);
+
+        return $result ? json_decode($result, true) : false;
+    }
+
+    private function getCurl() {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_DNS_CACHE_TIMEOUT, 3600);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FRESH_CONNECT, true);
+        curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_AUTOREFERER, true);
+
+        /**
+         * The name of the outgoing network interface to use.
+         * curl_setopt($ch, CURLOPT_INTERFACE, '127.0.0.1');
+         */
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->timeout);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
+        curl_setopt($ch, CURLOPT_ENCODING, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+
+        /**
+         * don't set this option!!!
+         * curl_setopt($ch, CURLOPT_SSLVERSION, 3);
+         */
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+        if ($this->proxy) {
+            if (false !== strpos($this->proxy, ':')) {
+                list($host, $port) = explode(':', $this->proxy);
+                curl_setopt($ch, CURLOPT_PROXY, $host);
+                curl_setopt($ch, CURLOPT_PROXYPORT, $port);
+            } else {
+                curl_setopt($ch, CURLOPT_PROXY, $this->proxy);
+            }
+            curl_setopt($ch, CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
+            //curl_setopt($ch, CURLOPT_PROXYUSERPWD, $loginpassw);
+        } elseif ($this->tor) {
+            curl_setopt($ch, CURLOPT_PROXY, '127.0.0.1');
+            curl_setopt($ch, CURLOPT_PROXYPORT, 9050);
+            curl_setopt($ch, CURLOPT_HTTPPROXYTUNNEL, true);
+            curl_setopt($ch, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+        }
+
+        return $ch;
+    }
+
 }
