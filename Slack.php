@@ -39,10 +39,10 @@ class Slack {
         return $this->post($method, $args);
     }
 
-    public function __call($name, $arguments) {
+    public function __call($name, $args) {
         if (strpos($name, '_')) {
             $name = str_replace('_', '.', $name);
-            return $this->post($name, $arguments);
+            return $this->post($name, $args[0]);
         } else {
             return false;
         }
@@ -56,8 +56,7 @@ class Slack {
      */
     private function post($method, $args = array()) {
         $url = str_replace('<method>', $method, $this->endpoint);
-        $args = array('token' => $this->token);
-
+        $args['token'] = $this->token;
         $ch = $this->getCurl();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_POST, true);
